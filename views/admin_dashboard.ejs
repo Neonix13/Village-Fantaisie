@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tableau de bord - Village et Fantaisy</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="dashboard-body">
+  <div class="card">
+    <div class="dashboard-head">
+      <h1>Tableau de bord</h1>
+      <p class="hint"><%= drawnCount %> / <%= totalCount %> joueurs inscrits</p>
+    </div>
+
+    <div class="big-buttons">
+      <a class="btn big" href="/admin/<%= party.id %>/<%= party.admin_token %>/pouvoir">Pouvoir</a>
+      <a class="btn big" href="/admin/<%= party.id %>/<%= party.admin_token %>/joueurs">Liste des joueurs</a>
+    </div>
+
+    <form method="POST" action="/admin/<%= party.id %>/<%= party.admin_token %>/reset" id="reset-form" class="reset-form">
+      <button class="btn small danger" type="submit">Recommencer la partie</button>
+    </form>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

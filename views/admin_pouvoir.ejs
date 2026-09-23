@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pouvoir</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="card">
+    <h1>Pouvoir</h1>
+    <p class="hint">Entre ton prenom pour acceder a ta fiche et utiliser (ou non) ton pouvoir.</p>
+    <% if (error) { %>
+      <p class="error"><%= error %></p>
+    <% } %>
+    <form method="POST" action="/admin/<%= party.id %>/<%= party.admin_token %>/pouvoir">
+      <input type="text" name="name" placeholder="Ton prenom" required autofocus>
+      <button class="btn big" type="submit">Valider</button>
+    </form>
+    <a class="link" href="/admin/<%= party.id %>/<%= party.admin_token %>">Retour</a>
+  </div>
+</body>
+</html>

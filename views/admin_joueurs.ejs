@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Liste des joueurs</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="dashboard-body">
+  <div class="card">
+    <div class="dashboard-head">
+      <h1>Liste des joueurs</h1>
+      <a class="link" href="/admin/<%= party.id %>/<%= party.admin_token %>">Retour</a>
+    </div>
+
+    <div class="scroll-area">
+      <h2>Vivants</h2>
+      <ul class="player-list" id="alive-list">
+        <% alivePlayers.forEach(function(p) { %>
+          <li data-player-id="<%= p.id %>">
+            <div class="player-row">
+              <span class="player-name"><%= p.name %></span>
+              <button class="btn small kill-btn" type="button">Tuer</button>
+            </div>
+            <div class="cause-buttons" hidden>
+              <% deathCauses.forEach(function(c) { %>
+                <button class="btn small cause-btn" type="button" data-cause="<%= c.id %>"><%= c.label %></button>
+              <% }) %>
+            </div>
+          </li>
+        <% }) %>
+      </ul>
+
+      <h2>Morts</h2>
+      <% if (deadPlayers.length === 0) { %>
+        <p class="hint">Personne n'est mort pour l'instant.</p>
+      <% } %>
+      <ul class="player-list" id="dead-list">
+        <% deadPlayers.forEach(function(p) { %>
+          <li data-player-id="<%= p.id %>">
+            <span><%= p.name %></span>
+            <span class="hint">(<%= deathCauseLabels[p.death_cause] || 'inconnue' %>)</span>
+            <button class="btn small revive-btn" type="button">Gracier</button>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    window.ADMIN_PARTY_ID = <%- JSON.stringify(party.id) %>;
+    window.ADMIN_TOKEN = <%- JSON.stringify(party.admin_token) %>;
+  </script>
+  <script src="/app.js"></script>
+</body>
+</html>

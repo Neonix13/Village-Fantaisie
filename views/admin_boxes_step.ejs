@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attribution des boites</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="card">
+    <p class="step">Etape 2bis / 4 - Attribution des boites</p>
+    <h1>Boites d'objets</h1>
+    <p class="hint">Associe un numero de boite aux roles qui possedent des objets. Laisse vide pour ne pas en attribuer.</p>
+
+    <form method="POST" action="/admin/<%= party.id %>/<%= party.admin_token %>/boxes-step">
+      <table class="table">
+        <thead><tr><th>Role</th><th>N. boite</th></tr></thead>
+        <tbody>
+          <% roles.forEach(function(role) { %>
+            <tr>
+              <td><%= role.name %></td>
+              <td><input type="text" name="number_<%= role.id %>" value="<%= boxByRole[role.id] || '' %>" placeholder="ex: 3"></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <button class="btn big" type="submit">Suivant</button>
+    </form>
+  </div>
+</body>
+</html>

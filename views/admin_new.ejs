@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nouvelle partie</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="card">
+    <p class="step">Etape 1 / 4 - Nombre de joueurs</p>
+    <h1>Creer une partie</h1>
+    <% if (error) { %>
+      <p class="error"><%= error %></p>
+    <% } %>
+    <form method="POST" action="/admin/new">
+      <label for="expected_players">Nombre de joueurs attendus</label>
+      <input type="number" id="expected_players" name="expected_players" min="1" max="60" value="<%= expectedPlayers %>" required autofocus>
+      <button class="btn" type="submit">Continuer</button>
+    </form>
+    <p class="hint">
+      A l'etape suivante, tu choisiras la composition du deck de roles.
+    </p>
+    <a class="link" href="/">Retour</a>
+  </div>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= role.name %> - <%= player.name %></title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="card">
+    <% if (!player.alive) { %>
+      <p class="warning">Tu es elimine(e). Tu ne parles plus et ne votes plus (sauf consultation du Chaman).</p>
+    <% } %>
+    <h1><%= player.name %></h1>
+    <p class="role-camp camp-<%= role.camp %>"><%= role.camp %><%= role.known ? ' - role connu de tous (***)' : '' %></p>
+    <h2><%= role.name %></h2>
+    <p><%= role.description %></p>
+    <% if (role.item) { %>
+      <p class="warning">Ton objet : <%= role.item %></p>
+    <% } else if (box) { %>
+      <p class="warning">Tes objets sont dans la boite n. <%= box %>.</p>
+    <% } %>
+
+    <% if (priestData) { %>
+      <hr>
+      <h2>Consultation (<%= priestData.remaining %> restante(s))</h2>
+      <% priestData.revealed.forEach(function(r) { %>
+        <p><strong><%= r.name %></strong> est <strong><%= r.role.name %></strong></p>
+      <% }) %>
+      <% if (priestData.remaining > 0) { %>
+        <form method="POST" action="/moi/<%= player.token %>/reveal">
+          <select name="target_player_id" required>
+            <option value="" disabled selected>Choisir un joueur</option>
+            <% priestData.candidates.forEach(function(c) { %>
+              <option value="<%= c.id %>"><%= c.name %></option>
+            <% }) %>
+          </select>
+          <button class="btn" type="submit">Consulter ce role</button>
+        </form>
+      <% } %>
+    <% } %>
+
+    <% if (devilData) { %>
+      <hr>
+      <h2>Roles de tous les joueurs</h2>
+      <table class="table">
+        <thead><tr><th>Nom</th><th>Role</th><th>Statut</th></tr></thead>
+        <tbody>
+          <% devilData.forEach(function(p) { %>
+            <tr>
+              <td><%= p.name %></td>
+              <td><%= p.role.name %></td>
+              <td><%= p.alive ? 'Vivant' : 'Mort' %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+
+    <% if (feeData) { %>
+      <hr>
+      <h2>Protection</h2>
+      <% if (feeData.protectedName) { %>
+        <p class="warning">Protege actuellement : <strong><%= feeData.protectedName %></strong></p>
+        <p class="hint">La protection expire quand le Herault relance le rappel du village.</p>
+      <% } else { %>
+        <p class="hint">Aucune protection active.</p>
+      <% } %>
+      <form method="POST" action="/moi/<%= player.token %>/protect">
+        <select name="target_player_id" required>
+          <option value="" disabled selected>Choisir un joueur a proteger</option>
+          <% feeData.candidates.forEach(function(c) { %>
+            <option value="<%= c.id %>"><%= c.name %></option>
+          <% }) %>
+        </select>
+        <button class="btn" type="submit">Proteger ce joueur</button>
+      </form>
+    <% } %>
+
+    <% if (role.special === 'spy_notes') { %>
+      <hr>
+      <h2>Mes notes secretes</h2>
+      <p class="hint">Note ici tes deductions sur le role de chacun. Si tu identifies sans erreur le role de 6 joueurs a la fin de la partie, tu gagnes seul.</p>
+      <form method="POST" action="/moi/<%= player.token %>/notes">
+        <textarea name="notes" rows="8" placeholder="ex: Marie = Sorciere, Paul = Villageois..."><%= player.notes || '' %></textarea>
+        <button class="btn" type="submit">Enregistrer mes notes</button>
+      </form>
+    <% } %>
+
+    <% if (player.role_id === 'herault') { %>
+      <hr>
+      <h2>Rappel du village</h2>
+      <p class="hint">Toutes les <%= party.herald_signal_minutes %> minutes, lance la chanson signal pour reunir le village.</p>
+      <p id="herald-timer" class="timer">--:--</p>
+      <form method="POST" action="/moi/<%= player.token %>/reset-timer">
+        <button class="btn big" type="submit">Relancer le rappel (30 min)</button>
+      </form>
+      <script>
+        window.HERALD_LAST_SIGNAL = <%- JSON.stringify(party.last_signal_at) %>;
+        window.HERALD_MINUTES = <%- JSON.stringify(party.herald_signal_minutes) %>;
+      </script>
+    <% } %>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
