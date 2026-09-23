@@ -1,8 +1,10 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const ejsLib = require('ejs');
 const db = require('./db');
-const { ROLES, PAIR_ROLES, buildDeck, buildCustomDeck, shuffle } = require('./roles');
+const { ROLES, PRIORITY, PAIR_ROLES, buildDeck, buildCustomDeck, shuffle } = require('./roles');
 
 const DEATH_CAUSES = [
   { id: 'devore', label: 'Devore (Loup-garou)' },
@@ -49,6 +51,26 @@ function groupRolesByCamp() {
 
 app.get('/', (req, res) => {
   res.render('home');
+});
+
+// --- Mode "un seul telephone" (jeu) --------------------------------------
+
+const roleBadgeTemplatePath = path.join(__dirname, 'views', 'partials', 'role_badge.ejs');
+
+function renderRoleBadge(role) {
+  const template = fs.readFileSync(roleBadgeTemplatePath, 'utf8');
+  return ejsLib.render(template, { role, size: 'sm' }, { filename: roleBadgeTemplatePath });
+}
+
+app.get('/jeu', (req, res) => {
+  const badges = {};
+  dealableRoles().forEach((role) => { badges[role.id] = renderRoleBadge(role); });
+
+  res.render('jeu', {
+    rolesJson: JSON.stringify(ROLES),
+    priorityJson: JSON.stringify(PRIORITY),
+    badgesJson: JSON.stringify(badges)
+  });
 });
 
 // --- Admin --------------------------------------------------------------

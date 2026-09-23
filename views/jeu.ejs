@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#100e17">
+  <title>Village & Fantaisy</title>
+  <link rel="stylesheet" href="/jeu.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    window.VF_ROLES = <%- rolesJson %>;
+    window.VF_PRIORITY = <%- priorityJson %>;
+    window.VF_BADGES = <%- badgesJson %>;
+  </script>
+  <script src="/jeu.js"></script>
+</body>
+</html>

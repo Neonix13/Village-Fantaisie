@@ -1,0 +1,64 @@
+<%
+// Partial : blason en SVG pur (pas d'emoji, pas de fichier image) pour un role.
+// Usage : include('partials/role_badge', { role: role, size: 'lg' })
+// `size` : 'sm' (defaut), 'md' ou 'lg'.
+const badgeSize = typeof size !== 'undefined' ? size : 'sm';
+%>
+<svg class="role-badge role-badge-<%= badgeSize %> camp-<%= role.camp %>" viewBox="0 0 48 58" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="<%= role.name %>">
+  <path class="role-badge-frame" d="M2 2 H46 V38 L24 56 L2 38 Z"/>
+  <g class="role-badge-icon">
+    <% if (role.id === 'roi') { %>
+      <path d="M8 34 L14 16 L22 26 L24 12 L26 26 L34 16 L40 34 Z"/>
+      <rect x="8" y="34" width="32" height="6" rx="1"/>
+    <% } else if (role.id === 'herault') { %>
+      <rect x="12" y="10" width="4" height="30"/>
+      <path d="M16 12 L36 19 L16 26 Z"/>
+    <% } else if (role.id === 'chaman') { %>
+      <circle cx="24" cy="18" r="10"/>
+      <rect x="21" y="28" width="6" height="14" rx="2"/>
+    <% } else if (role.id === 'villageois') { %>
+      <circle cx="24" cy="14" r="7"/>
+      <path d="M11 40 Q11 24 24 24 Q37 24 37 40 Z"/>
+    <% } else if (role.id === 'soldat') { %>
+      <path d="M24 7 L37 12 V24 Q37 35 24 41 Q11 35 11 24 V12 Z"/>
+    <% } else if (role.id === 'licorne') { %>
+      <path d="M24 6 L18 40 L30 40 Z"/>
+    <% } else if (role.id === 'fee') { %>
+      <path d="M24 8 L28 19 L40 19 L30 26 L34 38 L24 31 L14 38 L18 26 L8 19 L20 19 Z"/>
+    <% } else if (role.id === 'pretre') { %>
+      <circle cx="24" cy="24" r="15"/>
+      <rect class="role-badge-cut" x="21" y="10" width="6" height="28"/>
+      <rect class="role-badge-cut" x="10" y="21" width="28" height="6"/>
+    <% } else if (role.id === 'diable') { %>
+      <path d="M14 32 L11 12 L23 26 Z"/>
+      <path d="M34 32 L37 12 L25 26 Z"/>
+      <circle cx="24" cy="32" r="5"/>
+    <% } else if (role.id === 'demon') { %>
+      <path d="M24 6 C35 20 33 30 24 42 C15 30 13 20 24 6 Z"/>
+    <% } else if (role.id === 'vampire') { %>
+      <path d="M14 14 H34 L29 28 L24 19 L19 28 Z"/>
+    <% } else if (role.id === 'sorciere') { %>
+      <path d="M24 6 L35 34 H13 Z"/>
+      <ellipse cx="24" cy="34" rx="15" ry="4.5"/>
+      <circle class="role-badge-cut" cx="24" cy="19" r="2.4"/>
+    <% } else if (role.id === 'rejeton_vampire') { %>
+      <path d="M24 9 C33 22 35 30 24 39 C13 30 15 22 24 9 Z"/>
+    <% } else if (role.id === 'loup_garou') { %>
+      <ellipse cx="24" cy="33" rx="10" ry="8"/>
+      <circle cx="11" cy="17" r="4.5"/>
+      <circle cx="21" cy="9" r="4.5"/>
+      <circle cx="29" cy="9" r="4.5"/>
+      <circle cx="39" cy="17" r="4.5"/>
+    <% } else if (role.id === 'succube') { %>
+      <path d="M24 38 C6 25 11 6 24 15 C37 6 42 25 24 38 Z"/>
+    <% } else if (role.id === 'voleur') { %>
+      <path d="M8 18 Q24 8 40 18 Q40 28 24 28 Q8 28 8 18 Z"/>
+      <circle class="role-badge-cut" cx="16" cy="19" r="3.4"/>
+      <circle class="role-badge-cut" cx="32" cy="19" r="3.4"/>
+    <% } else if (role.id === 'espion') { %>
+      <circle cx="19" cy="19" r="10"/>
+      <circle class="role-badge-cut" cx="19" cy="19" r="5.6"/>
+      <line x1="27" y1="27" x2="39" y2="39" stroke-width="5.5" stroke-linecap="round"/>
+    <% } %>
+  </g>
+</svg>
