@@ -6,3 +6,10 @@ server.log
 *.html
 .claude/
 Mobile app design planning.zip
+
+www/
+android/keystore.properties
+android/*.jks
+*.jks
+*.keystore
+!docs/*.html

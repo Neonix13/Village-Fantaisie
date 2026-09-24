@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Village &amp; Fantaisy</string>
+    <string name="title_activity_main">Village &amp; Fantaisy</string>
+    <string name="package_name">com.neonix13.villagefantaisy</string>
+    <string name="custom_url_scheme">com.neonix13.villagefantaisy</string>
+</resources>

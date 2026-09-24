@@ -1,0 +1,13 @@
+{
+  "appId": "com.neonix13.villagefantaisy",
+  "appName": "Village & Fantaisy",
+  "webDir": "www",
+  "backgroundColor": "#100e17",
+  "android": {
+    "backgroundColor": "#100e17"
+  },
+  "ios": {
+    "backgroundColor": "#100e17",
+    "contentInset": "never"
+  }
+}
