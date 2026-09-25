@@ -345,3 +345,6 @@ button { font-family: inherit; }
 
 .vf-conv-note { display: flex; gap: 10px; align-items: center; border: 1px solid var(--vf-vilains); background: rgba(224, 108, 117, 0.1); color: var(--vf-vilains); border-radius: 12px; padding: 12px 14px; font-size: 14px; font-weight: 600; line-height: 1.4; }
 .vf-tile-btn:disabled { cursor: default; }
+
+/* Le bouton principal de l'accueil occupe toute la largeur (comme dans le design). */
+.vf-onboard > .vf-btn-gold { align-self: stretch; flex: none; }
