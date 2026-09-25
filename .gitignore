@@ -13,3 +13,5 @@ www/
 *.jks
 *.keystore
 keystore.properties
+
+!docs/index.html

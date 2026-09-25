@@ -23,6 +23,10 @@ There is no test suite, linter, or build step. Check syntax with `node --check p
 
 The phones need the host's LAN IP (`Get-NetIPAddress -AddressFamily IPv4` in PowerShell); it changes when the wifi reconnects, so re-check it if devices can't connect.
 
+## Static site (GitHub Pages)
+
+`npm run build:site` (`scripts/build-site.js`) renders `views/jeu.ejs` with `page.js` data into **`docs/`** (committed, generated — never edit by hand) so the game can be served by GitHub Pages (Settings > Pages > branch `master`, folder `/docs`) at a stable URL, e.g. `https://neonix13.github.io/Village-Fantaisie/`. Asset URLs in `jeu.ejs`/`jeu.css` are deliberately **relative** (no leading `/`) so the site works under a sub-path. Re-run the build and commit `docs/` after every change to `public/`, `views/` or `roles.js`, otherwise the hosted copy goes stale. Pages needs HTTPS internet at first load; there is no service worker on `master` (it exists only on `appli-mobile`).
+
 ## Architecture
 
 - **`server.js`** only serves `GET /` (rendering `views/jeu.ejs`), redirects `/jeu` → `/`, and statics from `public/`. It pre-renders every role badge once at startup and injects `window.VF_ROLES`, `window.VF_PRIORITY`, `window.VF_BADGES` into the page.

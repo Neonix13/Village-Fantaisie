@@ -5,7 +5,8 @@
   "description": "Jeu de roles caches joue en parallele d'une soiree",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build:site": "node scripts/build-site.js"
   },
   "dependencies": {
     "ejs": "^3.1.10",
