@@ -1,8 +1,8 @@
 // Catalogue statique des roles du jeu.
 // "known" (***) = le role est connu de tous des le depart.
-// "special" identifie un pouvoir gere par public/jeu.js (priest_reveal, fee_protect, spy_notes, devil_omniscient).
+// "special" identifie un pouvoir gere par public/jeu.js (priest_reveal, fee_protect, spy_notes, devil_omniscient, shaman_dead, succube_target, werewolf_devour).
 // "notDealt" = jamais distribue au depart (etat de conversion en cours de partie).
-// "needsBox" = le role possede des objets ranges dans une boite numerotee.
+// "needsBox" = le role possede des objets ranges dans une boite numerotee ("boxItems" : ce qu'elle contient, affiche au joueur).
 // "item" = objet fixe (roles connus de tous) : pas besoin de boite, toujours le meme objet.
 const ROLES = {
   roi: {
@@ -16,9 +16,8 @@ const ROLES = {
     item: 'Le cor'
   },
   chaman: {
-    id: 'chaman', name: 'Chaman', camp: 'royaume', known: true, special: null,
-    description: "Le seul à pouvoir parler avec les morts, en privé ou ouvertement.",
-    item: 'Le miroir'
+    id: 'chaman', name: 'Chaman', camp: 'royaume', known: false, special: 'shaman_dead',
+    description: "Connaît l'identité des joueurs morts pendant la partie."
   },
   villageois: {
     id: 'villageois', name: 'Villageois', camp: 'royaume', known: false, special: null,
@@ -64,12 +63,15 @@ const ROLES = {
     notDealt: true
   },
   loup_garou: {
-    id: 'loup_garou', name: 'Loup-garou', camp: 'vilains', known: false, special: null,
-    description: "Peut dévorer un autre joueur."
+    id: 'loup_garou', name: 'Loup-garou', camp: 'vilains', known: false, special: 'werewolf_devour',
+    description: "Peut dévorer un autre joueur, une fois toutes les 40 minutes (la première fois après 20 minutes de jeu). Une minute plus tard, la victime n'est éliminée que si elle porte une gommette rouge posée par le Loup-garou, à récupérer dans sa boîte.",
+    needsBox: true,
+    boxItems: 'des gommettes rouges'
   },
   succube: {
-    id: 'succube', name: 'Succube', camp: 'vilains', known: false, special: null,
-    description: "Choisit un joueur qui doit lui obéir. S'il refuse, il meurt et la Succube choisit une autre victime. Si la Succube meurt, sa victime meurt aussi."
+    id: 'succube', name: 'Succube', camp: 'vilains', known: false,
+    special: 'succube_target',
+    description: "Choisit une cible qu'elle ne peut plus changer tant que celle-ci est en vie. Elle peut mettre fin à sa vie, mais pas avant 20 minutes, et ne pourra alors plus choisir d'autre cible. La cible sait qu'elle est ciblée."
   },
   voleur: {
     id: 'voleur', name: 'Voleur', camp: 'autres', known: false, special: null,

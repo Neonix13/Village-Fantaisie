@@ -311,6 +311,9 @@ button { font-family: inherit; }
 .vf-opt { appearance: none; font-family: inherit; color: var(--vf-text); cursor: pointer; border-radius: 10px; border: 1px solid var(--vf-border); background: var(--vf-bg); padding: 12px 4px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
 .vf-opt:active { transform: scale(0.96); }
 .vf-opt.is-sel { border-color: var(--vf-gold); }
+.vf-opt.is-dead { opacity: 0.6; border-style: dashed; }
+.vf-opt:disabled { opacity: 0.35; cursor: default; }
+.vf-opt:disabled:active { transform: none; }
 .vf-initial { width: 40px; height: 40px; border-radius: 999px; border: 1px solid rgba(227, 178, 94, 0.5); color: var(--vf-gold); font-weight: 800; display: flex; align-items: center; justify-content: center; }
 
 .vf-space-head { height: 60px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 20px; border-bottom: 1px solid rgba(227, 178, 94, 0.14); }
@@ -348,3 +351,6 @@ button { font-family: inherit; }
 
 /* Le bouton principal de l'accueil occupe toute la largeur (comme dans le design). */
 .vf-onboard > .vf-btn-gold { align-self: stretch; flex: none; }
+
+/* Bandeau de connexion (partie hebergee par le PC) */
+.vf-link { position: absolute; top: 0; left: 0; right: 0; z-index: 40; padding: max(6px, env(safe-area-inset-top)) 12px 6px; background: var(--vf-vilains); color: #fff; font-size: 12px; font-weight: 700; text-align: center; letter-spacing: 0.04em; pointer-events: none; }

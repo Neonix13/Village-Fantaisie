@@ -9,7 +9,7 @@ const { ROLES, PRIORITY } = require('./roles');
 // moteur de templates.
 const roleBadgeTemplatePath = path.join(__dirname, 'views', 'partials', 'role_badge.ejs');
 
-function getPageData() {
+function getPageData(opts) {
   const template = fs.readFileSync(roleBadgeTemplatePath, 'utf8');
   const badges = {};
   Object.values(ROLES).forEach((role) => {
@@ -18,7 +18,9 @@ function getPageData() {
   return {
     rolesJson: JSON.stringify(ROLES),
     priorityJson: JSON.stringify(PRIORITY),
-    badgesJson: JSON.stringify(badges)
+    badgesJson: JSON.stringify(badges),
+    // true : la page est servie par server.js et se connecte a la partie de l'hote ; false : site statique (partie locale).
+    hosted: !!(opts && opts.hosted)
   };
 }
 

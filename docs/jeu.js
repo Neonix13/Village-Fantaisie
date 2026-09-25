@@ -1,7 +1,8 @@
 (function () {
   'use strict';
 
-  var STATE_KEY = 'vf-partie-v1';
+  var UI_KEY = 'vf-ui-v1';
+  var LEGACY_KEY = 'vf-partie-v1'; // ancienne sauvegarde : tout l'etat dans un seul objet
 
   var ROLES = window.VF_ROLES || {};
   var PRIORITY = window.VF_PRIORITY || [];
@@ -12,13 +13,21 @@
   var CAMP_COLOR = { royaume: 'var(--vf-royaume)', vilains: 'var(--vf-vilains)', autres: 'var(--vf-autres)' };
   var REVEAL_SECONDS = 60;
 
-  function defaultState() {
+  // Les regles vivent dans game.js ; la partie (joueurs, roles, morts...) est partagee entre
+  // tous les telephones connectes a la meme partie, seul l'ecran affiche est propre a chacun.
+  var Game = VFGame.create({ ROLES: ROLES, PRIORITY: PRIORITY });
+  var transport = window.VF_HOSTED ? VFNet.ws() : VFNet.local(Game);
+  var ready = false;   // premier etat de la partie recu
+  var link = 'connecting';
+  var seenAsk = 0; // derniere question "porte-t-elle la marque ?" deja affichee sur ce telephone
+  var seenAnn = 0; // derniere annonce (mort du Roi par un pouvoir) deja affichee sur ce telephone
+  var MULTI = !!window.VF_HOSTED; // chacun son telephone (sinon : un seul telephone qui circule)
+
+  // Champs propres a ce telephone (jamais partages).
+  function defaultUi() {
     return {
       screen: 'onboard',
       ob: 0,
-      count: 8,
-      deck: [],
-      players: [],
       name: '',
       err: '',
       cur: null,
@@ -26,42 +35,40 @@
       revealAt: null,
       tab: 'village',
       rview: 'partie',
-      space: null,
-      pr: [],
-      fee: null,
-      spy: {},
-      hl: null,
-      winner: null,
-      custom: countsOf(PRIORITY),
-      boxes: {},
-      conv: false
+      space: null
     };
   }
+  var UI_PERSISTED = ['screen', 'ob', 'tab', 'rview', 'space', 'cur', 'name'];
 
-  function loadState() {
+  function loadUi() {
+    var ui = defaultUi();
     try {
-      var raw = localStorage.getItem(STATE_KEY);
-      if (!raw) return defaultState();
-      var parsed = JSON.parse(raw);
-      // Par confidentialite / coherence au rechargement de page.
-      if (parsed.screen === 'reveal') parsed.screen = 'pioche';
-      if (parsed.screen === 'deck') parsed.screen = 'setup';
-      if (parsed.screen === 'space') { parsed.screen = 'hub'; parsed.space = null; }
-      parsed.flipped = false;
-      parsed.revealAt = null;
-      parsed.err = '';
-      if (!parsed.custom) parsed.custom = countsOf(PRIORITY);
-      return Object.assign(defaultState(), parsed);
-    } catch (e) {
-      return defaultState();
-    }
+      var raw = localStorage.getItem(UI_KEY) || localStorage.getItem(LEGACY_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        UI_PERSISTED.forEach(function (k) { if (parsed[k] !== undefined) ui[k] = parsed[k]; });
+      }
+    } catch (e) { /* ignore */ }
+    // Par confidentialite / coherence au rechargement de page.
+    if (ui.screen === 'reveal') ui.screen = 'pioche';
+    if (ui.screen === 'deck') ui.screen = 'setup';
+    if (ui.screen === 'space') { ui.screen = 'hub'; ui.space = null; }
+    return ui;
   }
 
-  var state = loadState();
+  var state = Object.assign(Game.defaultShared(), loadUi());
+  delete state.deck; // le paquet reste chez l'hote
 
   function save() {
-    try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+    try {
+      var o = {};
+      UI_PERSISTED.forEach(function (k) { o[k] = state[k]; });
+      localStorage.setItem(UI_KEY, JSON.stringify(o));
+    } catch (e) { /* ignore */ }
   }
+
+  // Heure commune a tous les telephones (celle de l'hote).
+  function nowMs() { return transport.now(); }
 
   // --- Helpers de rendu ---
   // Blasons SVG pre-rendus cote serveur depuis views/partials/role_badge.ejs.
@@ -78,21 +85,13 @@
     return '<span class="' + (filled ? 'msr-fill' : 'msr') + '" style="font-size:' + size + 'px">' + name + '</span>';
   }
 
-  // --- Melange (Fisher-Yates) ---
-  function shuffleArr(arr) {
-    for (var i = arr.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
-      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    }
-    return arr;
-  }
-
   // --- Coquille : ecran + rideau (le rideau survit aux re-rendus) ---
   var root = document.getElementById('app');
   root.innerHTML = '<div class="vf-viewport"><div class="vf-frame">' +
-    '<div id="vf-screen" class="vf-screen"></div><div id="vf-sheet"></div><div id="vf-curtain"></div></div></div>';
+    '<div id="vf-screen" class="vf-screen"></div><div id="vf-sheet"></div><div id="vf-link"></div><div id="vf-curtain"></div></div></div>';
   var screenEl = document.getElementById('vf-screen');
   var curtainEl = document.getElementById('vf-curtain');
+  var linkEl = document.getElementById('vf-link');
 
   var ANIM = {
     f: 'vfPush .34s cubic-bezier(.2,.8,.2,1) both',
@@ -107,6 +106,24 @@
     enter = 'none';
   }
 
+  // Re-rendu apres un changement venu de la partie : garde le focus et la saisie du prenom.
+  function refresh() {
+    var active = document.activeElement;
+    var typing = active && active.id === 'vf-name';
+    var sel = null;
+    if (typing) { state.name = active.value; sel = [active.selectionStart, active.selectionEnd]; }
+    render();
+    if (typing) {
+      var again = document.getElementById('vf-name');
+      if (again) {
+        again.focus();
+        try { again.setSelectionRange(sel[0], sel[1]); } catch (e) { /* ignore */ }
+      }
+    }
+  }
+
+  function dispatch(action, cb) { transport.dispatch(action, cb); }
+
   // Change d'ecran avec une direction d'animation ('f', 'b' ou 'fade').
   function go(screen, dir, patch) {
     state.screen = screen;
@@ -114,6 +131,67 @@
     enter = dir || 'fade';
     save();
     render();
+  }
+
+  // La phase de la partie (setup, pioche, hub, recap) est commune ; l'ecran exact est propre a
+  // chaque telephone dans les limites de la phase (ex. onboard/setup/deck pendant la mise en place).
+  var PHASE_ORDER = { setup: 0, pioche: 1, hub: 2, recap: 3 };
+  var PHASE_SCREENS = { setup: ['onboard', 'setup', 'deck'], pioche: ['pioche', 'reveal'], hub: ['hub', 'space'], recap: ['recap'] };
+  var PHASE_PATCH = {
+    setup: {},
+    pioche: { cur: null, flipped: false, revealAt: null, name: '', err: '', space: null },
+    hub: { tab: 'village', space: null },
+    recap: { space: null }
+  };
+  var SKIP_REFRESH = ['deck', 'reveal']; // ecrans qui ne dependent pas des autres joueurs
+
+  // Ramene ce telephone sur un ecran compatible avec la phase. Renvoie true s'il a change d'ecran.
+  function syncScreen(prevPhase) {
+    var allowed = PHASE_SCREENS[state.phase] || PHASE_SCREENS.setup;
+    if (allowed.indexOf(state.screen) !== -1) return false;
+    // Un joueur qui regarde sa carte n'en est pas arrache quand la partie demarre.
+    if (state.screen === 'reveal' && state.phase === 'hub' && state.players[state.cur]) return false;
+    var target = state.phase === 'setup' ? 'setup' : allowed[0];
+    var dir = !prevPhase ? 'fade' : PHASE_ORDER[state.phase] >= PHASE_ORDER[prevPhase] ? 'f' : 'b';
+    go(target, dir, PHASE_PATCH[state.phase]);
+    return true;
+  }
+
+  function sharedKey() {
+    var o = {};
+    Game.SHARED_KEYS.forEach(function (k) { if (k !== 'rev' && k !== 'deck') o[k] = state[k]; });
+    return JSON.stringify(o);
+  }
+
+  // Un nouvel etat de la partie arrive (de ce telephone ou d'un autre).
+  function onShared(v) {
+    var first = !ready;
+    var prevPhase = first ? null : state.phase;
+    var prevKey = first ? null : sharedKey();
+    Object.keys(v).forEach(function (k) { state[k] = v[k]; });
+    ready = true;
+    showLink();
+    if (sheet && prevPhase && prevPhase !== state.phase) closeSheet();
+    var announce = !first && state.ann && state.ann.id !== seenAnn;
+    if (state.ann) seenAnn = state.ann.id; // a la connexion, on ne rejoue pas une ancienne annonce
+    var askMax = (state.ask || []).reduce(function (m, q) { return Math.max(m, q.id); }, 0);
+    var newAsk = !first && askMax > seenAsk;
+    seenAsk = Math.max(seenAsk, askMax);
+    if (sheet && sheet.kind === 'devoured' && !askById(sheet.id)) closeSheet(); // quelqu'un d'autre a deja repondu
+    var moved = syncScreen(prevPhase);
+    if (!moved && (first || prevKey !== sharedKey()) && SKIP_REFRESH.indexOf(state.screen) === -1) refresh();
+    if (announce && state.phase === 'hub' && state.screen !== 'reveal' && soldierIds().length) openSheet({ kind: 'soldiers' });
+    if (newAsk && state.phase === 'hub' && state.screen !== 'reveal' && state.ask.length) openSheet({ kind: 'devoured', id: state.ask[0].id });
+  }
+
+  function onStatus(s) {
+    link = s;
+    showLink();
+    if (!ready) render();
+  }
+
+  function showLink() {
+    linkEl.innerHTML = ready && link !== 'online' ? '<div class="vf-link">Connexion perdue · reconnexion…</div>' : '';
   }
 
   function curtain(text, iconName, applyPatch) {
@@ -126,7 +204,15 @@
     setTimeout(function () { curtainEl.innerHTML = ''; }, 1100);
   }
 
+  function renderConnecting() {
+    return '<div class="vf-todo">' +
+      '<div class="vf-diamond" style="animation:vfSpin .8s ease-in-out infinite alternate">' + icon('sync_alt', 34) + '</div>' +
+      '<p class="vf-body">' + (link === 'offline' ? 'Connexion impossible… nouvelle tentative.' : 'Connexion à la partie…') + '</p>' +
+      '</div>';
+  }
+
   function renderScreen() {
+    if (!ready) return renderConnecting();
     switch (state.screen) {
       case 'onboard': return renderOnboard();
       case 'setup': return renderSetup();
@@ -208,7 +294,11 @@
   }
 
   function renderOnboardPage2() {
-    var steps = [
+    var steps = MULTI ? [
+      'Chacun joue sur son téléphone : isole-toi pour tirer ta carte, personne ne doit la voir.',
+      'Tous les téléphones affichent le même Village, mis à jour en direct.',
+      'Besoin de ton pouvoir ? Ouvre ton espace secret, puis referme-le pour que personne ne le voie.'
+    ] : [
       'Chacun son tour, isole-toi pour tirer ta carte, puis passe le téléphone.',
       'Pendant la partie, le téléphone reste au centre, sur le Village.',
       'Besoin de ton pouvoir ? Ouvre ton espace secret, puis referme-le avant de le rendre.'
@@ -217,33 +307,20 @@
       return '<div class="vf-step-row"><span class="vf-step-roman">' + OB_NUMERALS[i] + '</span><span class="vf-step-text">' + text + '</span></div>';
     }).join('');
     return '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;align-self:stretch;animation:vfTab .3s ease-out both">' +
-      '<h1 class="vf-h1">Un seul téléphone</h1>' +
+      '<h1 class="vf-h1">' + (MULTI ? 'Chacun son téléphone' : 'Un seul téléphone') + '</h1>' +
       '<div class="vf-steps">' + stepsHtml + '</div>' +
       '</div>';
   }
 
   // ---- Ecran 2 : Mise en place ----
-  function countsOf(arr) {
-    var m = {};
-    arr.forEach(function (id) { m[id] = (m[id] || 0) + 1; });
-    return m;
-  }
-  function sumCounts(c) {
-    return Object.keys(c).reduce(function (n, id) { return n + c[id]; }, 0);
-  }
+  var sumCounts = Game.sumCounts;
   function currentCounts() { return state.custom; }
 
-  // Liste par defaut : tous les personnages du jeu (quantites de PRIORITY dans roles.js).
-  function defaultPool() { return countsOf(PRIORITY); }
+  function defaultPool() { return Game.defaultPool(); }
   function isDefaultPool() {
     var d = defaultPool(), c = state.custom;
     var keys = Object.keys(d).concat(Object.keys(c));
     return keys.every(function (k) { return (d[k] || 0) === (c[k] || 0); });
-  }
-  function expandCounts(c) {
-    var deck = [];
-    Object.keys(c).forEach(function (id) { for (var i = 0; i < c[id]; i++) deck.push(id); });
-    return deck;
   }
 
   function renderSetup() {
@@ -304,7 +381,10 @@
 
     var content;
     if (remaining > 0) {
-      var errText = state.err === 'dup' ? 'Ce prénom est déjà pris.' : 'Entre ton prénom pour piocher.';
+      var errText = state.err === 'dup' ? 'Ce prénom est déjà pris.'
+        : state.err === 'offline' ? 'Connexion perdue : réessaie dans un instant.'
+        : state.err === 'full' ? 'Toutes les cartes sont déjà tirées.'
+        : 'Entre ton prénom pour piocher.';
       content =
         '<div class="vf-scroll" style="padding:0 16px 12px;text-align:center">' +
           '<div class="vf-pill">' + icon('style', 18) + 'Carte ' + (drawn + 1) + ' sur ' + total + '</div>' +
@@ -322,7 +402,7 @@
         '<div class="vf-scroll" style="padding:0 24px;text-align:center">' +
           '<div class="vf-diamond" style="animation:vfSpin .5s cubic-bezier(.2,.8,.2,1) both">' + icon('done_all', 34) + '</div>' +
           '<h1 class="vf-h1" style="font-size:22px">Toutes les cartes<br>sont tirées</h1>' +
-          '<p class="vf-body-sm" style="font-size:15px">Pose le téléphone au centre : la partie commence.</p>' +
+          '<p class="vf-body-sm" style="font-size:15px">' + (MULTI ? 'Touche le bouton : le Village s\'affiche sur tous les téléphones.' : 'Pose le téléphone au centre : la partie commence.') + '</p>' +
           '<button class="vf-btn-gold" style="align-self:stretch" data-action="to-hub">Commencer la partie</button>' +
         '</div>';
     }
@@ -342,11 +422,14 @@
   function boxNumberOf(player) {
     var manual = state.boxes && state.boxes[player.role];
     if (manual) return escapeAttr(manual);
-    var idx = state.players
-      .filter(function (p) { return ROLES[p.role] && ROLES[p.role].needsBox; })
-      .indexOf(player);
-    return String(idx + 1);
+    return String(autoBox(player.role));
   }
+  // Numero automatique : rang du personnage parmi tous ceux qui ont une boite (Sorciere 1, Loup-garou 2...),
+  // toujours le meme d'une partie a l'autre pour pouvoir preparer les boites a l'avance.
+  function autoBox(roleId) {
+    return Object.keys(ROLES).filter(function (id) { return ROLES[id].needsBox; }).indexOf(roleId) + 1;
+  }
+  function boxItemsText(role) { return role.boxItems ? ' (' + role.boxItems + ')' : ''; }
 
   function secondsLeft() {
     if (!state.revealAt) return REVEAL_SECONDS;
@@ -362,7 +445,7 @@
     if (role.item) {
       objLine = '<div class="vf-obj">' + icon('workspace_premium', 22) + 'Prends : ' + role.item + '</div>';
     } else if (role.needsBox) {
-      objLine = '<div class="vf-obj">' + icon('inventory_2', 22) + 'Tes objets : boîte n° ' + boxNumberOf(player) + '</div>';
+      objLine = '<div class="vf-obj">' + icon('inventory_2', 22) + 'Tes objets : boîte n° ' + boxNumberOf(player) + boxItemsText(role) + '</div>';
     }
 
     var flipped = state.flipped;
@@ -389,7 +472,7 @@
       '<div id="vf-details" class="vf-details" ' + (flipped ? '' : 'hidden') + '>' +
         '<p style="margin:0;font-size:16px;line-height:1.55;text-wrap:pretty">' + role.description + '</p>' +
         objLine +
-        '<button class="vf-btn-gold" style="align-self:stretch" data-action="next-player">J\'ai mémorisé · joueur suivant</button>' +
+        '<button class="vf-btn-gold" style="align-self:stretch" data-action="next-player">J\'ai mémorisé' + (MULTI ? '' : ' · joueur suivant') + '</button>' +
         '<span id="vf-autohide" style="color:var(--vf-muted);font-size:12px;font-variant-numeric:tabular-nums">La carte se cache seule dans ' + secondsLeft() + ' s</span>' +
       '</div>' +
       '</div>';
@@ -412,15 +495,16 @@
   function nextPlayer() {
     if (leaving) return;
     leaving = true;
-    curtain('Passe le téléphone', 'sync_alt', function () {
+    curtain(MULTI ? 'Carte mémorisée' : 'Passe le téléphone', 'sync_alt', function () {
       leaving = false;
       go('pioche', 'fade', { flipped: false, revealAt: null, cur: null });
+      syncScreen(state.phase);
     });
   }
 
   // Compte a rebours d'auto-masquage de la carte revelee.
   setInterval(function () {
-    if (state.screen === 'space') updateTimer();
+    if (state.screen === 'space') { updateTimer(); updateSucWait(); }
     if (state.screen !== 'reveal' || !state.flipped || !state.revealAt) return;
     if (Date.now() - state.revealAt > REVEAL_SECONDS * 1000) { nextPlayer(); return; }
     var el = document.getElementById('vf-autohide');
@@ -430,10 +514,11 @@
   // ==== Hub, espace secret, fin de partie ====
   var RULES = [
     'Le jeu se joue en parallèle de la soirée : chacun garde son rôle secret.',
-    'Un seul téléphone : il reste posé au centre, sur l\'écran Village.',
+    MULTI ? 'Chacun joue sur son téléphone : tous affichent le même Village, mis à jour en direct.'
+      : 'Un seul téléphone : il reste posé au centre, sur l\'écran Village.',
     'Toutes les 30 minutes, le Hérault réunit le village et organise le vote.',
     'Les rôles marqués *** sont connus de tous dès le départ, avec leur objet.',
-    'Un joueur éliminé ne parle plus et ne vote plus, sauf consultation du Chaman.',
+    'Un joueur éliminé ne parle plus et ne vote plus.',
     'Pour utiliser un pouvoir, ouvre ton espace secret à l\'écart, puis referme-le.'
   ];
   var ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
@@ -444,11 +529,7 @@
   var sheetEl = document.getElementById('vf-sheet');
 
   function initial(name) { return escapeAttr(name.charAt(0).toUpperCase()); }
-  function aliveIds() {
-    var ids = [];
-    state.players.forEach(function (p, i) { if (!p.dead) ids.push(i); });
-    return ids;
-  }
+  function aliveIds() { return Game.aliveIds(state.players); }
 
   function dividerTitle(camp, total) {
     return '<div style="display:flex;align-items:center;gap:10px">' +
@@ -534,7 +615,12 @@
           '<span style="font-size:13px;font-weight:700;text-decoration:' + (p.dead ? 'line-through' : 'none') + '">' + escapeAttr(p.name) + '</span></button>';
       }).join('') + '</div>';
     }
-    return '<div class="vf-col">' + table +
+    var askBanner = (state.ask && state.ask.length && state.players[state.ask[0].pid])
+      ? '<button class="vf-tile-btn" data-action="ask-open" style="flex-direction:row;gap:12px;padding:12px 14px;text-align:left;border-color:var(--vf-vilains)">' +
+        '<span style="flex:none;color:var(--vf-vilains)">' + icon('pets', 26) + '</span>' +
+        '<span style="flex:1;font-size:14px;font-weight:700;line-height:1.35">' + escapeAttr(state.players[state.ask[0].pid].name) + ' a été dévoré(e) · porte-t-elle la marque ?</span>' +
+        '<span style="color:var(--vf-muted)">' + icon('chevron_right', 22) + '</span></button>' : '';
+    return '<div class="vf-col">' + askBanner + table +
       '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:center;font-size:12px;color:var(--vf-muted)">' +
         '<span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:999px;border:2px solid var(--vf-royaume)"></span>Rôle connu de tous ***</span>' +
         '<span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:999px;border:2px solid var(--vf-border);opacity:0.5"></span>Éliminé</span></div>' +
@@ -550,7 +636,7 @@
     }).join('');
     return '<div class="vf-col" style="gap:18px">' +
       '<div class="vf-dash"><span style="color:var(--vf-gold)">' + icon('visibility_off', 26) + '</span>' +
-      '<span style="font-size:14px;line-height:1.5;text-wrap:pretty">Besoin de revoir ton rôle ou d\'utiliser ton pouvoir ? Touche ton prénom, isole-toi, puis referme ton espace avant de rendre le téléphone.</span></div>' +
+      '<span style="font-size:14px;line-height:1.5;text-wrap:pretty">Besoin de revoir ton rôle ou d\'utiliser ton pouvoir ? Touche ton prénom, isole-toi, puis referme ton espace' + (MULTI ? '.' : ' avant de rendre le téléphone.') + '</span></div>' +
       '<div class="vf-grid3">' + tiles + '</div></div>';
   }
 
@@ -590,7 +676,8 @@
 
   function optionsList(title, sub, options) {
     var opts = options.map(function (o) {
-      return '<button class="vf-opt' + (o.sel ? ' is-sel' : '') + '" data-action="' + o.action + '" data-arg="' + o.arg + '">' + o.visual +
+      return '<button class="vf-opt' + (o.sel ? ' is-sel' : '') + (o.dead ? ' is-dead' : '') + '"' +
+        (o.disabled ? ' disabled' : ' data-action="' + o.action + '" data-arg="' + o.arg + '"') + '>' + o.visual +
         '<span style="font-size:13px;font-weight:700;line-height:1.2">' + o.label + '</span></button>';
     }).join('');
     return '<div style="padding:8px 24px 12px;display:flex;flex-direction:column;gap:6px;text-align:center">' +
@@ -598,8 +685,17 @@
       '<p style="margin:0;color:var(--vf-muted);font-size:13px;line-height:1.45">' + sub + '</p></div>' +
       '<div class="vf-sheet-list">' + opts + '</div>';
   }
-  function personOption(i, action, sel) {
-    return { action: action, arg: i, sel: sel, label: escapeAttr(state.players[i].name), visual: '<span class="vf-initial">' + initial(state.players[i].name) + '</span>' };
+  // Joueur dans une liste de pouvoir : les eliminés sont signales ; `disabled` = visible mais non ciblable.
+  var DEAD_TAG = '<br><span style="font-size:11px;color:var(--vf-muted);font-weight:600">Éliminé(e)</span>';
+  function personOption(i, action, sel, disabled) {
+    var p = state.players[i];
+    return { action: action, arg: i, sel: sel, dead: !!p.dead, disabled: !!(disabled && p.dead),
+      label: escapeAttr(p.name) + (p.dead ? DEAD_TAG : ''), visual: '<span class="vf-initial">' + initial(p.name) + '</span>' };
+  }
+  // Vivants d'abord, puis les eliminés.
+  function othersAliveFirst(owner, keep) {
+    var ids = state.players.map(function (p, i) { return i; }).filter(function (i) { return i !== owner && (!keep || keep(i)); });
+    return ids.filter(function (i) { return !state.players[i].dead; }).concat(ids.filter(function (i) { return state.players[i].dead; }));
   }
 
   function sheetInner() {
@@ -607,13 +703,12 @@
     var owner = state.space;
     switch (sheet.kind) {
       case 'priest':
-        return optionsList('Consulter un rôle', 'Choisis un joueur : son rôle te sera révélé, à toi seul.',
-          aliveIds().filter(function (i) { return i !== owner && state.pr.indexOf(i) === -1; })
+        return optionsList('Consulter un rôle', 'Choisis un joueur, vivant ou éliminé : son rôle te sera révélé, à toi seul.',
+          othersAliveFirst(owner, function (i) { return state.pr.indexOf(i) === -1; })
             .map(function (i) { return personOption(i, 'priest-pick', false); }));
       case 'fee':
         return optionsList('Protéger un joueur', 'Le jeton le protège d\'une mort ou d\'une transformation jusqu\'au prochain vote.',
-          aliveIds().filter(function (i) { return i !== owner; })
-            .map(function (i) { return personOption(i, 'fee-pick', state.fee === i); }));
+          othersAliveFirst(owner).map(function (i) { return personOption(i, 'fee-pick', state.fee === i, true); }));
       case 'spy':
         return optionsList('Rôle de ' + escapeAttr(ps[sheet.pid].name), 'Ta supposition reste secrète jusqu\'à la fin.',
           Object.keys(ROLES).map(function (id) {
@@ -633,10 +728,10 @@
           '<button class="vf-btn-sm" data-action="close-sheet">Fermer</button></div>';
       case 'vamp':
         return optionsList('Convertir un joueur', 'Choisis un joueur vivant : il deviendra Rejeton vampire (sauf la Licorne).',
-          aliveIds().filter(function (i) {
+          othersAliveFirst(owner, function (i) {
             var r = ps[i].role;
-            return i !== owner && r !== 'licorne' && r !== 'rejeton_vampire';
-          }).map(function (i) { return personOption(i, 'vamp-pick', false); }));
+            return r !== 'licorne' && r !== 'rejeton_vampire';
+          }).map(function (i) { return personOption(i, 'vamp-pick', false, true); }));
       case 'soldiers':
         var names = soldierIds().map(function (i) { return escapeAttr(ps[i].name); }).join(', ');
         return '<div class="vf-sheet-body">' + diamond64('shield') +
@@ -672,6 +767,48 @@
           '<button class="vf-btn-sm" style="background:' + (p.dead ? 'var(--vf-autres)' : 'var(--vf-vilains)') + '" data-action="toggle-player">' + (p.dead ? 'Ramener en jeu' : 'Déclarer éliminé(e)') + '</button>' +
           (p.dead ? '' : '<button class="vf-btn-outline" style="align-self:stretch" data-action="pardon-player">Déclarer gracié(e)</button>') +
           '<button class="vf-btn-text" data-action="close-sheet">Fermer</button></div>';
+      case 'devoured':
+        var dq = askById(sheet.id);
+        if (!dq || !ps[dq.pid]) return '';
+        var dname = escapeAttr(ps[dq.pid].name);
+        return '<div class="vf-sheet-body">' + diamond64('pets') +
+          '<h2 class="vf-sheet-title">' + dname + ' a été dévoré(e)</h2>' +
+          '<p class="vf-sheet-text">Porte-t-elle la marque du Loup-garou (une gommette rouge) ? Si oui, elle est éliminée. Sinon, elle reste en vie.</p>' +
+          '<button class="vf-btn-sm" style="background:var(--vf-vilains)" data-action="lg-verdict" data-arg="' + dq.id + ':1">Oui · éliminé(e)</button>' +
+          '<button class="vf-btn-sm" style="background:var(--vf-autres)" data-action="lg-verdict" data-arg="' + dq.id + ':0">Non · reste en vie</button>' +
+          '<button class="vf-btn-text" data-action="close-sheet">Plus tard</button></div>';
+      case 'lg':
+        return optionsList('Dévorer un joueur', 'Le joueur choisi ne meurt que s\'il porte une gommette rouge posée par toi. Tu ne pourras plus dévorer avant 40 minutes.',
+          othersAliveFirst(owner).map(function (i) { return personOption(i, 'lg-pick', false, true); }));
+      case 'lg-confirm':
+        var lname = escapeAttr(ps[sheet.pid].name);
+        return '<div class="vf-sheet-body">' + diamond64('pets') +
+          '<h2 class="vf-sheet-title">Dévorer ' + lname + ' ?</h2>' +
+          '<p class="vf-sheet-text">Pose d\'abord une gommette rouge sur ' + lname + '. Une minute plus tard, tous les joueurs verront « ' + lname + ' a été dévoré(e) » et vérifieront si elle porte ta marque : si oui elle est éliminée, sinon elle reste en vie. Tu ne pourras plus dévorer avant 40 minutes.</p>' +
+          '<button class="vf-btn-sm" style="background:var(--vf-vilains)" data-action="lg-confirm" data-arg="' + sheet.pid + '">Dévorer</button>' +
+          '<button class="vf-btn-text" data-action="close-sheet">Annuler</button></div>';
+      case 'suc':
+        return optionsList('Choisir une cible', 'Tu ne pourras plus en changer tant qu\'elle est en vie. Elle saura qu\'elle est ciblée.',
+          othersAliveFirst(owner).map(function (i) { return personOption(i, 'suc-pick', false, true); }));
+      case 'suc-confirm':
+        var sname = escapeAttr(ps[sheet.pid].name);
+        return '<div class="vf-sheet-body">' + diamond64('lock') +
+          '<h2 class="vf-sheet-title">Cibler ' + sname + ' ?</h2>' +
+          '<p class="vf-sheet-text">Tu ne pourras plus changer de cible tant que ' + sname + ' est en vie. ' + sname + ' sera prévenu(e) qu\'il ou elle est ciblé(e) par la Succube.</p>' +
+          '<button class="vf-btn-sm" data-action="suc-confirm" data-arg="' + sheet.pid + '">Confirmer la cible</button>' +
+          '<button class="vf-btn-text" data-action="close-sheet">Annuler</button></div>';
+      case 'suc-kill':
+        var kname = escapeAttr(ps[state.suc[owner].t].name);
+        return '<div class="vf-sheet-body">' + diamond64('skull') +
+          '<h2 class="vf-sheet-title">Mettre fin à la vie de ' + kname + ' ?</h2>' +
+          '<p class="vf-sheet-text">Sa mort sera annoncée aux autres joueurs une minute plus tard. Tu ne pourras plus choisir d\'autre cible ensuite.</p>' +
+          '<button class="vf-btn-sm" style="background:var(--vf-vilains)" data-action="suc-kill">Mettre fin à sa vie</button>' +
+          '<button class="vf-btn-text" data-action="close-sheet">Annuler</button></div>';
+      case 'info':
+        return '<div class="vf-sheet-body">' + diamond64(sheet.icon) +
+          '<h2 class="vf-sheet-title">' + sheet.title + '</h2>' +
+          '<p class="vf-sheet-text">' + sheet.text + '</p>' +
+          '<button class="vf-btn-sm" data-action="close-sheet">Fermer</button></div>';
       case 'end':
         return '<div class="vf-sheet-body">' + diamond64('flag') +
           '<h2 class="vf-sheet-title">Fin de partie ?</h2>' +
@@ -691,10 +828,10 @@
         var r = ROLES[rid];
         var note = isRes ? 'Garde cette information pour toi.'
           : r.item ? '*** Connu de tous · objet : ' + r.item
-          : r.needsBox ? 'Objets dans une boîte préparée à l\'avance.'
+          : r.needsBox ? 'Objets dans une boîte préparée à l\'avance' + boxItemsText(r) + '.'
           : r.notDealt ? 'N\'est jamais distribué : apparaît en cours de partie.' : '';
         return '<div class="vf-sheet-body" style="padding-top:12px;gap:12px">' +
-          '<span class="vf-eyebrow">' + (isRes ? escapeAttr(ps[sheet.pid].name) + ' est' : CAMP_LABEL[r.camp]) + '</span>' +
+          '<span class="vf-eyebrow">' + (isRes ? escapeAttr(ps[sheet.pid].name) + (ps[sheet.pid].dead ? ' (éliminé(e)) est' : ' est') : CAMP_LABEL[r.camp]) + '</span>' +
           badge(rid, 72) +
           '<h2 style="margin:0;font-size:26px;line-height:1.1;font-weight:800;letter-spacing:0.1em;text-transform:uppercase">' + r.name + '</h2>' +
           '<span style="width:40px;height:1px;background:var(--vf-gold)"></span>' +
@@ -714,7 +851,7 @@
   function closeSheet() { sheet = null; renderSheet(); }
 
   // ---- Espace secret d'un joueur ----
-  function heraldRemaining() { return state.hl ? state.hl + HERALD_MS - Date.now() : HERALD_MS; }
+  function heraldRemaining() { return state.hl ? state.hl + HERALD_MS - nowMs() : HERALD_MS; }
   function timerView() {
     var rem = heraldRemaining();
     var alert = rem <= 0;
@@ -725,6 +862,17 @@
       color: alert ? 'var(--vf-vilains)' : 'var(--vf-text)',
       ring: alert ? 'var(--vf-vilains) 100%, var(--vf-vilains) 0' : 'var(--vf-gold) ' + pct + '%, var(--vf-border) 0'
     };
+  }
+  // Compte a rebours de la Succube : le bouton s'active tout seul a la fin.
+  function updateSucWait() {
+    var waits = [['vf-suc-wait', sucRemaining(state.suc && state.suc[state.space])],
+                 ['vf-lg-wait', lgRemaining(state.lg && state.lg[state.space])]];
+    for (var k = 0; k < waits.length; k++) {
+      var el = document.getElementById(waits[k][0]);
+      if (!el) continue;
+      if (waits[k][1] <= 0) { render(); return; }
+      el.textContent = clock(waits[k][1]);
+    }
   }
   function updateTimer() {
     var ring = document.getElementById('vf-timer-ring');
@@ -750,7 +898,8 @@
         }
         var rr = ROLES[ps[id].role];
         return '<button data-action="result-open" data-arg="' + id + '" class="vf-tile-btn" style="height:150px;justify-content:center;gap:8px;padding:10px">' +
-          badge(ps[id].role, 40) + '<span style="font-size:14px;font-weight:700">' + escapeAttr(ps[id].name) + '</span>' +
+          badge(ps[id].role, 40) + '<span style="font-size:14px;font-weight:700;text-decoration:' + (ps[id].dead ? 'line-through' : 'none') + '">' + escapeAttr(ps[id].name) + '</span>' +
+          (ps[id].dead ? '<span style="font-size:11px;color:var(--vf-muted);font-weight:600;margin-top:-4px">Éliminé(e)</span>' : '') +
           '<span style="font-size:12px;color:' + CAMP_COLOR[rr.camp] + ';text-transform:uppercase;letter-spacing:0.08em;font-weight:700">' + rr.name + '</span></button>';
       }).join('');
       return '<div style="display:flex;flex-direction:column;gap:12px">' +
@@ -803,6 +952,51 @@
         '<span style="font-size:13px;color:var(--vf-muted);line-height:1.4">' + (used ? 'De nouveau disponible quand le Hérault relance le rappel.' : 'Un joueur devient Rejeton vampire (une fois par manche).') + '</span></span>' +
         (used ? '' : '<span style="color:var(--vf-muted)">' + icon('chevron_right', 22) + '</span>') + '</button></div>';
     }
+    if (role.special === 'shaman_dead') {
+      var deadIds = ps.map(function (p, i) { return i; }).filter(function (i) { return ps[i].dead && i !== idx; });
+      var deadBody = deadIds.length
+        ? '<div class="vf-grid3">' + deadIds.map(function (i) {
+          var rr = ROLES[ps[i].role];
+          return '<div style="border-radius:10px;border:1px solid var(--vf-border);background:var(--vf-card);padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center">' +
+            badge(ps[i].role, 32) +
+            '<span style="font-size:13px;font-weight:700">' + escapeAttr(ps[i].name) + '</span>' +
+            '<span style="font-size:11px;color:' + CAMP_COLOR[rr.camp] + ';font-weight:600">' + rr.name + '</span></div>';
+        }).join('') + '</div>'
+        : '<p style="margin:0;color:var(--vf-muted);font-size:14px;line-height:1.45;text-align:center">Personne n\'est encore mort. Reviens voir quand un joueur sera éliminé.</p>';
+      return '<div style="display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:baseline"><h3 class="vf-h3">Les morts</h3>' +
+        '<span style="font-size:13px;color:var(--vf-muted)">' + deadIds.length + ' joueur' + (deadIds.length > 1 ? 's' : '') + '</span></div>' + deadBody + '</div>';
+    }
+    if (role.special === 'werewolf_devour') {
+      var lrem = lgRemaining(state.lg && state.lg[idx]);
+      var lbtn = ps[idx].dead ? '' : lrem > 0
+        ? '<button class="vf-btn-sm" style="margin-top:0;background:var(--vf-vilains);opacity:0.45;cursor:default" disabled>Dévorer un joueur · dans <span id="vf-lg-wait">' + clock(lrem) + '</span></button>'
+        : '<button class="vf-btn-sm" style="margin-top:0;background:var(--vf-vilains)" data-action="lg-open">Dévorer un joueur</button>';
+      return '<div style="display:flex;flex-direction:column;gap:12px"><h3 class="vf-h3">Dévoration</h3>' +
+        '<p style="margin:0;color:var(--vf-muted);font-size:14px;line-height:1.45;text-align:center">Une fois toutes les 40 minutes, tu peux dévorer un joueur : il est déclaré mort. Ta première dévoration est possible après 20 minutes de jeu. Ta victime n\'est éliminée que si elle porte une gommette rouge posée par toi : récupère-les dans ta boîte.</p>' + lbtn + '</div>';
+    }
+    if (role.special === 'succube_target') {
+      var se = state.suc && state.suc[idx];
+      var starget = se && ps[se.t] ? ps[se.t] : null;
+      var alive = !ps[idx].dead;
+      var scard;
+      if (starget && !starget.dead) {
+        scard = '<div style="display:flex;align-items:center;gap:14px;border:1px solid var(--vf-gold);border-radius:12px;padding:14px 16px;text-align:left">' +
+          '<span style="flex:none;width:48px;height:48px;border-radius:999px;border:1px solid var(--vf-gold);display:flex;align-items:center;justify-content:center;color:var(--vf-gold)">' + icon('lock', 24) + '</span>' +
+          '<span style="flex:1;display:flex;flex-direction:column;gap:2px"><span style="font-size:16px;font-weight:700">Cible : ' + escapeAttr(starget.name) + '</span>' +
+          '<span style="font-size:13px;color:var(--vf-muted);line-height:1.4">Verrouillée jusqu\'à sa mort ou son bannissement. Elle sait qu\'elle est ciblée.</span></span></div>' +
+          (!alive ? '' : sucRemaining(se) > 0
+            ? '<button class="vf-btn-sm" style="margin-top:0;background:var(--vf-vilains);opacity:0.45;cursor:default" disabled>Mettre fin à sa vie · dans <span id="vf-suc-wait">' + clock(sucRemaining(se)) + '</span></button>' +
+              '<p style="margin:0;color:var(--vf-muted);font-size:13px;text-align:center">Possible 20 minutes après le choix de la cible.</p>'
+            : '<button class="vf-btn-sm" style="margin-top:0;background:var(--vf-vilains)" data-action="suc-kill-open">Mettre fin à sa vie</button>');
+      } else if (se && se.done) {
+        scard = '<p style="margin:0;color:var(--vf-muted);font-size:14px;line-height:1.45;text-align:center">Tu as mis fin à la vie de ta cible : tu ne peux plus choisir d\'autre cible.</p>';
+      } else {
+        scard = '<p style="margin:0;color:var(--vf-muted);font-size:14px;line-height:1.45;text-align:center">' +
+          (starget ? escapeAttr(starget.name) + ' est mort(e) : tu peux choisir une nouvelle cible.' : 'Aucune cible pour l\'instant. Une fois choisie, tu ne pourras plus en changer tant qu\'elle est en vie.') + '</p>' +
+          (alive ? '<button class="vf-btn-sm" style="margin-top:0" data-action="suc-open">Choisir une cible</button>' : '');
+      }
+      return '<div style="display:flex;flex-direction:column;gap:12px"><h3 class="vf-h3">Cible</h3>' + scard + '</div>';
+    }
     if (role.special === 'devil_omniscient') {
       var rows2 = others.map(function (i) {
         var rr = ROLES[ps[i].role];
@@ -814,6 +1008,31 @@
       return '<div style="display:flex;flex-direction:column;gap:12px"><h3 class="vf-h3">Tu connais tout le monde</h3><div class="vf-grid3">' + rows2 + '</div></div>';
     }
     return '';
+  }
+
+  function askById(id) {
+    var list = state.ask || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  function sucRemaining(e) { return e && e.at ? e.at + Game.SUC_DELAY_MS - nowMs() : 0; }
+  // Premiere dévoration : 20 min apres le debut de la partie ; ensuite 40 min apres la precedente.
+  function lgRemaining(e) {
+    if (e) return e.at + Game.LG_DELAY_MS - nowMs();
+    return state.start ? state.start + Game.LG_FIRST_DELAY_MS - nowMs() : 0;
+  }
+  function clock(ms) {
+    var t = Math.max(0, Math.ceil(ms / 1000));
+    return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+  }
+
+  // Une Succube en vie a verrouille ce joueur (vivant) comme cible.
+  function targetedBySuccube(idx) {
+    if (state.players[idx].dead) return false;
+    return Object.keys(state.suc || {}).some(function (k) {
+      var e = state.suc[k], s = state.players[k];
+      return e.t === idx && !e.done && s && !s.dead && s.role === 'succube';
+    });
   }
 
   function renderSpace() {
@@ -835,7 +1054,7 @@
         '<span style="flex:none;width:56px;height:56px;border-radius:10px;border:1px solid var(--vf-gold);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--vf-gold)">' +
         '<span style="font-size:10px;font-weight:700;letter-spacing:0.1em">N°</span><span style="font-size:24px;font-weight:800;line-height:1">' + box + '</span></span>' +
         '<span style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:var(--vf-muted)">Tes objets</span>' +
-        '<span style="font-size:15px;line-height:1.4">Dans la boîte n° ' + box + ', à récupérer en secret.</span></span></div>';
+        '<span style="font-size:15px;line-height:1.4">Dans la boîte n° ' + box + boxItemsText(role) + ', à récupérer en secret.</span></span></div>';
     }
 
     return '<div class="vf-hub" style="' + enterAnim() + '">' +
@@ -844,7 +1063,8 @@
         '<span style="font-size:17px;font-weight:800;letter-spacing:0.06em">' + escapeAttr(owner.name) + '</span></span>' +
         '<button class="vf-refermer" data-action="close-space">' + icon('lock', 18) + 'Refermer</button></div>' +
       '<div class="vf-hub-body">' +
-        (owner.dead ? '<div class="vf-dead-note">' + icon('skull', 22) + 'Tu es éliminé(e). Tu ne parles plus et ne votes plus (sauf avec le Chaman).</div>' : '') +
+        (owner.dead ? '<div class="vf-dead-note">' + icon('skull', 22) + 'Tu es éliminé(e). Tu ne parles plus et ne votes plus.</div>' : '') +
+        (targetedBySuccube(idx) ? '<div class="vf-conv-note">' + icon('visibility', 22) + 'La Succube t\'a choisi(e) comme cible : elle peut mettre fin à tes jours à tout moment.</div>' : '') +
         (owner.converted ? '<div class="vf-conv-note">' + icon('bloodtype', 22) + 'Tu as été transformé(e) en Rejeton vampire : tu perds tes anciens pouvoirs et tu rejoins le camp du mal.</div>' : '') +
         '<div class="vf-hero">' +
           '<span style="font-size:11px;font-weight:700;letter-spacing:0.24em;color:var(--vf-gold);text-transform:uppercase">' + CAMP_LABEL[role.camp] + (role.known ? ' · ***' : '') + '</span>' +
@@ -920,16 +1140,6 @@
       '<button class="vf-btn-sm" style="flex:none;font-size:14px;letter-spacing:0.12em" data-action="new-game">Nouvelle partie</button></div>';
   }
 
-  function newGame() {
-    try { localStorage.removeItem(STATE_KEY); } catch (e) { /* ignore */ }
-    var count = state.count;
-    state = defaultState();
-    state.count = count;
-    sheet = null;
-    renderSheet();
-    go('setup', 'b');
-  }
-
   // ==== Causes de mort ====
   var CAUSES = [
     { id: 'devore', label: 'Dévoré', by: 'Loup-garou', icon: 'pets' },
@@ -952,36 +1162,10 @@
   // depasser le nombre de joueurs, la partie tire alors au hasard dedans.
   var dk = null; // brouillon de l'ecran (transitoire)
 
-  function dealtIds() { return Object.keys(ROLES).filter(function (id) { return !ROLES[id].notDealt; }); }
+  var dealtIds = Game.dealtIds;
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-  function validateCounts(c) {
-    if (sumCounts(c) < 1) return 'Ajoute au moins un personnage.';
-    if (c.soldat > 0 && !(c.roi > 0)) return 'Le Soldat nécessite un Roi.';
-    if (c.diable > 0 && !(c.demon > 0)) return 'Le Diable nécessite au moins un Démon.';
-    return '';
-  }
-
-  // Tire n cartes au hasard dans la liste (completee par des Villageois si elle est
-  // trop courte) en gardant les dependances Soldat->Roi et Diable->Demon.
-  function drawFromPool(pool, n) {
-    var deck = shuffleArr(expandCounts(pool)).slice(0, n);
-    while (deck.length < n) deck.push('villageois');
-    function fix(dep, need) {
-      if (deck.indexOf(dep) === -1 || deck.indexOf(need) !== -1) return;
-      var slot = deck.indexOf('villageois');
-      if (slot === -1) {
-        for (var i = 0; i < deck.length; i++) {
-          if (['soldat', 'roi', 'diable', 'demon'].indexOf(deck[i]) === -1) { slot = i; break; }
-        }
-      }
-      if (slot !== -1) deck[slot] = need;
-      else deck = deck.map(function (id) { return id === dep ? 'villageois' : id; });
-    }
-    fix('soldat', 'roi');
-    fix('diable', 'demon');
-    return shuffleArr(deck);
-  }
+  var validateCounts = Game.validateCounts;
 
   function openDeck() {
     var c = currentCounts();
@@ -1014,10 +1198,10 @@
       if (!present.length) {
         return '<p class="vf-body-sm" style="max-width:none;text-align:center">Aucun personnage de la liste n\'a d\'objets à ranger dans une boîte.</p>';
       }
-      return '<p class="vf-body-sm" style="max-width:none;text-align:center">Numéro de la boîte de chaque personnage. Laisse vide pour un numéro automatique (1, 2, 3… selon l\'ordre de pioche).</p>' +
+      return '<p class="vf-body-sm" style="max-width:none;text-align:center">Numéro de la boîte de chaque personnage. Laisse vide pour le numéro automatique (affiché dans la case).</p>' +
         present.map(function (id) {
           return '<div class="vf-dc-row">' + badge(id, 30, 'var(--vf-bg)') + '<span class="vf-dc-name">' + ROLES[id].name + '</span>' +
-            '<input class="vf-box-input" type="text" inputmode="numeric" maxlength="6" placeholder="auto" data-box="' + id + '" value="' + escapeAttr(state.boxes[id] || '') + '"></div>';
+            '<input class="vf-box-input" type="text" inputmode="numeric" maxlength="6" placeholder="' + autoBox(id) + '" data-box="' + id + '" value="' + escapeAttr(state.boxes[id] || '') + '"></div>';
         }).join('');
     }
     return '<p class="vf-body-sm" style="max-width:none;text-align:center">Choisis les personnages qui peuvent apparaître. La liste peut dépasser le nombre de joueurs (' + state.count + ') : les cartes sont tirées au hasard parmi eux.</p>' +
@@ -1064,78 +1248,27 @@
   }
   function deckOk() {
     if (validateCounts(dk.counts)) return;
-    var c = {};
-    dealtIds().forEach(function (id) { if (dk.counts[id] > 0) c[id] = dk.counts[id]; });
-    state.custom = c;
-    save();
-    go('setup', 'b');
-  }
-
-  // Le Diable meurt avec le dernier Demon en vie (sauf si la Fee le protege : protection consommee).
-  // Renvoie la feuille a afficher, ou null si rien ne se passe.
-  function devilFollowsDemons() {
-    var demonAlive = aliveIds().some(function (i) { return state.players[i].role === 'demon'; });
-    if (demonAlive) return null;
-    var devils = aliveIds().filter(function (i) { return state.players[i].role === 'diable'; });
-    if (!devils.length) return null;
-    var idx = devils[0];
-    if (state.fee === idx) {
-      state.fee = null;
-      return { kind: 'devil', pid: idx, saved: true };
-    }
-    devils.forEach(function (i) {
-      state.players[i].dead = true;
-      state.players[i].cause = 'lien';
+    dispatch({ type: 'custom-set', counts: dk.counts }, function (r) {
+      if (!r.err) go('setup', 'b');
     });
-    return { kind: 'devil', pid: idx };
   }
 
-  function soldierIds() {
-    return aliveIds().filter(function (i) { return state.players[i].role === 'soldat'; });
-  }
-
-  // Elimine / ramene un joueur ; la protection de la Fee absorbe une elimination.
-  function togglePlayer() {
-    var pid = sheet.pid;
-    var p = state.players[pid];
-    if (p.dead) {
-      p.dead = false;
-      delete p.cause;
-      save();
-      closeSheet();
-      render();
-      return;
-    }
-    if (state.fee === pid) {
-      state.fee = null;
-      save();
-      openSheet({ kind: 'player', pid: pid, saved: true });
-      return;
-    }
-    openSheet({ kind: 'cause', pid: pid });
-  }
+  function soldierIds() { return Game.soldierIds(state.players); }
 
   // --- Interactions ---
   function drawCard() {
     var input = document.getElementById('vf-name');
     var name = input ? input.value.trim() : '';
     state.name = name;
-    var lower = name.toLowerCase();
-    var duplicate = state.players.some(function (p) { return p.name.toLowerCase() === lower; });
-    if (!name || duplicate) {
-      state.err = name ? 'dup' : 'empty';
-      save(); render();
-      var again = document.getElementById('vf-name');
-      if (again) again.focus();
-      return;
-    }
-    state.players.push({ name: name, role: state.deck[state.players.length], dead: false });
-    go('reveal', 'f', {
-      cur: state.players.length - 1,
-      name: '',
-      err: '',
-      flipped: false,
-      revealAt: null
+    dispatch({ type: 'draw', name: name }, function (r) {
+      if (r.err) {
+        state.err = r.err === 'dup' || r.err === 'offline' || r.err === 'full' ? r.err : 'empty';
+        save(); render();
+        var again = document.getElementById('vf-name');
+        if (again) again.focus();
+        return;
+      }
+      go('reveal', 'f', { cur: r.idx, name: '', err: '', flipped: false, revealAt: null });
     });
   }
 
@@ -1160,22 +1293,16 @@
         go('onboard', 'b', { ob: 2 });
         break;
       case 'count-dec':
-        state.count = Math.max(4, state.count - 1);
-        save(); render();
+        dispatch({ type: 'count', delta: -1 });
         break;
       case 'count-inc':
-        state.count = Math.min(30, state.count + 1);
-        save(); render();
+        dispatch({ type: 'count', delta: 1 });
         break;
       case 'start-pioche':
-        go('pioche', 'f', {
-          deck: drawFromPool(state.custom, state.count),
-          players: [], pr: [], fee: null, spy: {}, hl: null, winner: null,
-          name: '', err: '', cur: null
-        });
+        dispatch({ type: 'start-pioche' });
         break;
       case 'pioche-back':
-        go('setup', 'b');
+        dispatch({ type: 'back-setup' });
         break;
       case 'draw':
         drawCard();
@@ -1187,12 +1314,12 @@
         nextPlayer();
         break;
       case 'to-hub':
-        go('hub', 'f', { tab: 'village', hl: state.hl || Date.now() });
+        dispatch({ type: 'to-hub' });
         break;
 
       // --- Personnalisation du paquet ---
       case 'open-deck': openDeck(); break;
-      case 'custom-reset': state.custom = defaultPool(); save(); render(); break;
+      case 'custom-reset': dispatch({ type: 'custom-reset' }); break;
       case 'deck-back': go('setup', 'b'); break;
       case 'deck-tab': dk.tab = arg; render(); break;
       case 'deck-step': deckStep(arg); break;
@@ -1212,69 +1339,60 @@
         openSheet({ kind: 'player', pid: +arg });
         break;
       case 'toggle-player':
-        togglePlayer();
+        var tpid = sheet.pid;
+        if (state.players[tpid].dead) {
+          dispatch({ type: 'revive', pid: tpid }, function () { closeSheet(); });
+        } else {
+          dispatch({ type: 'kill-attempt', pid: tpid }, function (r) {
+            if (r.saved) openSheet({ kind: 'player', pid: tpid, saved: true });
+            else if (r.needCause) openSheet({ kind: 'cause', pid: tpid });
+            else closeSheet();
+          });
+        }
         break;
       case 'cause-pick':
-        var dying = state.players[sheet.pid];
-        if (dying.role === 'diable' && arg === 'pendu') break; // le Diable ne meurt pas par le vote
-        dying.dead = true;
-        dying.cause = arg;
-        var followUp = null;
-        if (dying.role === 'demon') followUp = devilFollowsDemons();
-        else if (dying.role === 'roi' && soldierIds().length) followUp = { kind: 'soldiers' };
-        save();
-        if (followUp) openSheet(followUp);
-        else closeSheet();
-        render();
+        dispatch({ type: 'kill', pid: sheet.pid, cause: arg }, function (r) {
+          if (r.err === 'devil' || r.err === 'offline') return; // la feuille reste ouverte
+          if (r.followUp) openSheet(r.followUp);
+          else closeSheet();
+        });
         break;
       case 'pardon-player':
-        state.hl = Date.now();
-        state.fee = null;
-        state.conv = false;
-        save();
-        openSheet({ kind: 'pardon', pid: sheet.pid });
-        render();
+        var gpid = sheet.pid;
+        dispatch({ type: 'pardon', pid: gpid }, function (r) {
+          if (!r.err) openSheet({ kind: 'pardon', pid: gpid });
+        });
         break;
       case 'ban-soldiers':
-        soldierIds().forEach(function (i) {
-          state.players[i].dead = true;
-          state.players[i].cause = 'bannissement';
-        });
-        save(); closeSheet(); render();
+        dispatch({ type: 'ban-soldiers' }, function () { closeSheet(); });
         break;
       case 'vamp-open':
         if (!state.conv) openSheet({ kind: 'vamp' });
         break;
       case 'vamp-pick':
-        var bitten = state.players[+arg];
-        if (bitten.role === 'fee') state.fee = null;
-        bitten.role = 'rejeton_vampire';
-        bitten.converted = true;
-        state.conv = true;
-        save(); closeSheet(); render();
+        dispatch({ type: 'vamp', pid: +arg }, function () { closeSheet(); });
         break;
       case 'ask-end':
         openSheet({ kind: 'end' });
         break;
       case 'confirm-end':
-        closeSheet();
-        go('recap', 'f');
+        dispatch({ type: 'end' }, function () { closeSheet(); });
         break;
       case 'ask-reset':
         openSheet({ kind: 'reset' });
         break;
       case 'confirm-reset':
       case 'new-game':
-        newGame();
+        dispatch({ type: 'new-game' }, function () { closeSheet(); });
         break;
       case 'close-sheet':
         closeSheet();
         break;
       case 'recap-back':
-        go('hub', 'b', { tab: 'village' });
+        dispatch({ type: 'recap-back' });
         break;
       case 'set-winner':
-        state.winner = arg; save(); render();
+        dispatch({ type: 'set-winner', camp: arg });
         break;
 
       // --- Espaces secrets ---
@@ -1297,9 +1415,10 @@
         if (state.pr.length < 2) openSheet({ kind: 'priest' });
         break;
       case 'priest-pick':
-        state.pr.push(+arg); save();
-        openSheet({ kind: 'result', pid: +arg });
-        render();
+        var seen = +arg;
+        dispatch({ type: 'priest-pick', pid: seen }, function (r) {
+          if (!r.err) openSheet({ kind: 'result', pid: seen });
+        });
         break;
       case 'result-open':
         openSheet({ kind: 'result', pid: +arg });
@@ -1308,19 +1427,60 @@
         openSheet({ kind: 'fee' });
         break;
       case 'fee-pick':
-        state.fee = +arg; save(); closeSheet(); render();
+        dispatch({ type: 'fee-pick', pid: +arg }, function () { closeSheet(); });
         break;
       case 'spy-open':
         openSheet({ kind: 'spy', pid: +arg });
         break;
       case 'spy-pick':
-        state.spy[sheet.pid] = arg; save(); closeSheet(); render();
+        dispatch({ type: 'spy-pick', pid: sheet.pid, role: arg }, function () { closeSheet(); });
         break;
       case 'reset-timer':
-        state.hl = Date.now();
-        state.fee = null;
-        state.conv = false;
-        save(); updateTimer();
+        dispatch({ type: 'reset-timer' }, function () { updateTimer(); });
+        break;
+      case 'ask-open':
+        if (state.ask && state.ask.length) openSheet({ kind: 'devoured', id: state.ask[0].id });
+        break;
+      case 'lg-verdict':
+        var vp = arg.split(':');
+        dispatch({ type: 'lg-verdict', id: +vp[0], marked: vp[1] === '1' }, function (r) {
+          if (r.saved) openSheet({ kind: 'info', icon: 'shield', title: escapeAttr(state.players[r.pid].name) + ' est protégé(e)',
+            text: 'La Fée l\'a protégé(e) : elle survit et la protection est consommée.' });
+          // Sinon rien : la feuille de la question se referme toute seule (onShared) et ne doit pas
+          // masquer une annonce arrivée entre-temps (ex. bannir les Soldats).
+        });
+        break;
+      case 'lg-open':
+        openSheet({ kind: 'lg' });
+        break;
+      case 'lg-pick':
+        openSheet({ kind: 'lg-confirm', pid: +arg });
+        break;
+      case 'lg-confirm':
+        dispatch({ type: 'lg-kill', by: state.space, pid: +arg }, function (r) {
+          if (r.err) closeSheet();
+          else openSheet({ kind: 'info', icon: 'visibility_off', title: 'Dévoration lancée',
+            text: escapeAttr(state.players[r.pid].name) + ' sera annoncé(e) comme dévoré(e) dans 1 minute, pour que personne ne fasse le lien avec toi. Les joueurs vérifieront alors la marque. Tu pourras dévorer de nouveau dans 40 minutes.' });
+        });
+        break;
+      case 'suc-open':
+        openSheet({ kind: 'suc' });
+        break;
+      case 'suc-pick':
+        openSheet({ kind: 'suc-confirm', pid: +arg });
+        break;
+      case 'suc-confirm':
+        dispatch({ type: 'suc-pick', by: state.space, pid: +arg }, function () { closeSheet(); });
+        break;
+      case 'suc-kill-open':
+        openSheet({ kind: 'suc-kill' });
+        break;
+      case 'suc-kill':
+        dispatch({ type: 'suc-kill', by: state.space }, function (r) {
+          if (r.err) closeSheet();
+          else openSheet({ kind: 'info', icon: 'visibility_off', title: 'Fin de vie lancée',
+            text: escapeAttr(state.players[r.pid].name) + ' sera déclaré(e) mort(e) dans 1 minute, pour que personne ne fasse le lien avec toi. Tu ne peux plus choisir d\'autre cible.' });
+        });
         break;
     }
   }
@@ -1331,11 +1491,7 @@
   root.addEventListener('input', function (e) {
     if (e.target && e.target.id === 'vf-name') state.name = e.target.value;
     var boxRole = e.target && e.target.getAttribute && e.target.getAttribute('data-box');
-    if (boxRole) {
-      var v = e.target.value.trim();
-      if (v) state.boxes[boxRole] = v; else delete state.boxes[boxRole];
-      save();
-    }
+    if (boxRole) dispatch({ type: 'box-set', role: boxRole, value: e.target.value });
   });
   root.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && e.target && e.target.id === 'vf-name') {
@@ -1344,5 +1500,6 @@
     }
   });
 
-  render();
+  transport.start({ onState: onShared, onStatus: onStatus });
+  if (!ready) render();
 })();
