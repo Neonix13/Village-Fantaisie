@@ -8,6 +8,8 @@ A French-language hidden-role party game ("loup-garou"-style) meant to run along
 
 There used to be a second, multi-device implementation (per-player links, admin dashboard, SQLite). It was deleted on purpose; this single-phone client-only version is now the only one. Don't reintroduce a database or per-player URLs.
 
+**`master` is the web-only version**: the PC runs `server.js` and a single phone opens the page over the local wifi. The Android/Capacitor app, PWA files, Play Store visuals and privacy policy live only on the **`appli-mobile`** branch (a revert of that work sits on `master`; re-merging it means reverting the revert). `.gitignore` on `master` blocks `android/`, `www/` and signing keys so they can never be committed here.
+
 ## Commands
 
 ```bash
